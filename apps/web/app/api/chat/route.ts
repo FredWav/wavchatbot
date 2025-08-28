@@ -1,26 +1,26 @@
-// apps/web/app/api/chat/route.ts
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 type ChatBody = {
   message: string;
   conversationId?: string;
+  userId?: string; // requis par ton schema.sql
 };
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-function getAdmin() {
-  const url = process.env.SUPABASE_URL!;
-  const key = process.env.SUPABASE_SERVICE_ROLE!;
+function getAdmin(): SupabaseClient | null {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE;
+  if (!url || !key) return null;
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-async function dbReady(admin: ReturnType<typeof createClient>) {
+async function dbReady(admin: SupabaseClient) {
   try {
     const { error } = await admin.from("conversations").select("id").limit(1);
-    if (error) return false; // table absente / schéma pas en cache
-    return true;
+    return !error;
   } catch {
     return false;
   }
@@ -29,48 +29,57 @@ async function dbReady(admin: ReturnType<typeof createClient>) {
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as ChatBody;
+
     if (!body?.message || typeof body.message !== "string") {
       return NextResponse.json(
         { error: "BAD_REQUEST", message: "message manquant" },
         { status: 400 }
       );
     }
+    if (!body?.userId || typeof body.userId !== "string") {
+      return NextResponse.json(
+        { error: "BAD_REQUEST", message: "userId manquant" },
+        { status: 400 }
+      );
+    }
 
-    // 1) Vérifie la DB (sans planter si tables absentes)
-    const haveSupabase =
-      !!process.env.SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE;
-    const admin = haveSupabase ? getAdmin() : null;
+    const conversationId =
+      body.conversationId ||
+      (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+
+    const admin = getAdmin();
     const isReady = admin ? await dbReady(admin) : false;
 
-    // 2) Crée/resolve conversationId même si pas de DB
-    const conversationId =
-      body.conversationId || (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`);
-
-    // 3) Si DB prête, journalise (sinon on skip proprement)
+    // Journalisation si DB prête
     if (admin && isReady) {
-      // upsert conversation
       await admin.from("conversations").upsert(
-        [{ id: conversationId, created_at: new Date().toISOString() }],
+        [
+          {
+            id: conversationId,
+            user_id: body.userId,
+            created_at: new Date().toISOString(),
+          },
+        ],
         { onConflict: "id" }
       );
 
-      // insère message utilisateur
       await admin.from("messages").insert({
         conversation_id: conversationId,
+        user_id: body.userId,
         role: "user",
         content: body.message,
         created_at: new Date().toISOString(),
       });
     }
 
-    // 4) Appel OpenAI — réponse minimale mais stable
+    // Réponse OpenAI
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
+      temperature: 0.4,
       messages: [
         { role: "system", content: "Tu es un assistant clair et concret." },
         { role: "user", content: body.message },
       ],
-      temperature: 0.4,
     });
 
     const text =
@@ -80,6 +89,7 @@ export async function POST(req: Request) {
     if (admin && isReady) {
       await admin.from("messages").insert({
         conversation_id: conversationId,
+        user_id: body.userId,
         role: "assistant",
         content: text,
         created_at: new Date().toISOString(),
@@ -92,20 +102,19 @@ export async function POST(req: Request) {
       metadata: { sources: 0, movable: false, contradiction: false },
     });
   } catch (err: any) {
-    // Si la DB n’est pas initialisée, renvoie une erreur claire mais non bloquante
     const msg = String(err?.message || err);
-    const isSchema =
+    const schemaErr =
       msg.includes("PGRST205") ||
       msg.includes("schema cache") ||
       msg.includes("relation") ||
       msg.includes("does not exist");
 
-    if (isSchema) {
+    if (schemaErr) {
       return NextResponse.json(
         {
           error: "DB_NOT_INITIALIZED",
           message:
-            "Base non initialisée. Exécute db/schema.sql puis db/rls.sql sur Supabase, puis relance.",
+            "Base non initialisée. Exécute db/schema.sql puis db/rls.sql dans Supabase.",
         },
         { status: 503 }
       );
