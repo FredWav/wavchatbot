@@ -213,7 +213,9 @@ export default function Page() {
                   borderRadius: 10,
                 }}
               >
-                Je suis <b>Fred Wav (assistant)</b>, ton double IA. Dis-moi ce qui bloque, je te sors un plan concret.
+                Je suis <b>Fred Wav (assistant)</b>, le double IA de Fred Wav.
+<br />
+Comment puis-je t’aider aujourd’hui ?
               </div>
             )}
 
