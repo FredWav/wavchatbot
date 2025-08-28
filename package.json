@@ -8,7 +8,6 @@
     "build": "pnpm --filter web build",
     "start": "pnpm --filter web start",
     "lint": "pnpm --filter web lint",
-    "discord": "pnpm --filter discord-bot start",
     "ingest": "node scripts/ingest.js"
   },
   "workspaces": [
