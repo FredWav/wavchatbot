@@ -1,0 +1,130 @@
+name: Copilot Task
+description: Tâche ciblée pour GitHub Copilot (coding agent) — petite, autonome, avec critères d’acceptation clairs.
+title: "[Copilot] <titre court et actionnable>"
+labels:
+  - copilot
+  - small-pr
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Règles clés
+        - Livrer **de petits incréments**.
+        - **1 fichier = 1 commit = 1 push immédiat.** Pas de “gros push” final.
+        - La PR doit passer `pnpm lint`, `pnpm typecheck`, `pnpm build` (+ tests s’ils existent).
+        - Respect des garde-fous (éthique, sécurité) et de **Wav Anti-Bullshit** (ne rien inventer).
+
+  - type: input
+    id: problem
+    attributes:
+      label: Problem/Goal (1–3 phrases)
+      description: Décris le problème ou l’objectif de manière brève et concrète.
+      placeholder: "Ex. Exposer /api/chat avec pipeline modération → RAG → génération."
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexte & motivation
+      description: Liens, raisons, contraintes techniques, capture(s) si besoin.
+      placeholder: "Liens vers issues/PR, captures, contraintes Next.js/Discord/Supabase…"
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria (bullet list)
+      description: Critères objectifs de réussite. Liste à puces.
+      placeholder: |
+        - Fichier X créé/modifié
+        - Lint/Type/Build OK
+        - Tests unitaires fournis pour helpers
+        - Format de réponse respecté
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Files/Paths to change (explicite)
+      description: Indique précisément les fichiers/dossiers ciblés. Scope réduit.
+      placeholder: |
+        - apps/web/app/api/chat/route.ts (nouveau)
+        - apps/web/lib/rag.ts (lecture seule)
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope / Contraintes
+      description: Ce qu’il ne faut pas faire (refactors globaux, nouvelles dépendances, etc.).
+      placeholder: |
+        - ❌ Pas de refactor global
+        - ❌ Pas d’ajout de dépendances sans justification
+        - ❌ Pas de changements hors dossiers listés
+
+  - type: dropdown
+    id: tests_required
+    attributes:
+      label: Tests requis ?
+      options:
+        - "yes - unit"
+        - "yes - e2e"
+        - "no"
+      description: Précise le niveau attendu.
+    validations:
+      required: true
+
+  - type: textarea
+    id: test_plan
+    attributes:
+      label: Test plan
+      description: Comment prouver que ça marche (unitaires/E2E, cas limites).
+      placeholder: "Vitest pour utils; Playwright si UI/flux; cas erreurs (modération N3, IDK…)."
+
+  - type: checkboxes
+    id: commit_push_policy
+    attributes:
+      label: Commit/Push policy
+      options:
+        - label: "Je confirme : **1 fichier = 1 commit = 1 push immédiat** (atomique)."
+        - label: "J’utilise des messages conventional-commits (feat/fix/chore...)."
+        - label: "Je n’agrège pas plusieurs fichiers sans lien direct."
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risques & plan de rollback
+      description: Quels risques ? Comment revenir en arrière rapidement ?
+      placeholder: "Risque de breaking imports; rollback = revert du commit atomique."
+
+  - type: input
+    id: expected_size
+    attributes:
+      label: Taille visée PR
+      description: Garde la PR petite (ex. ≤ 200 LOC modifiées).
+      placeholder: "≈ 1 fichier (± tests), ≤ 200 LOC"
+
+  - type: textarea
+    id: dod
+    attributes:
+      label: Definition of Done (DoD)
+      description: Check-list finale à cocher avant merge.
+      placeholder: |
+        - Lint/Type/Build OK
+        - Tests verts (si requis)
+        - Description PR claire + captures si UI
+        - Aucune fuite de secret / .env
+
+  - type: textarea
+    id: references
+    attributes:
+      label: Liens & références
+      description: Docs internes, spec, messages de persona, fiches KB à utiliser, API externes.
+      placeholder: |
+        - config/persona.md
+        - kb/B1-algo-tiktok.md
+        - README sections X/Y
