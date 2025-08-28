@@ -1,4 +1,5 @@
 import ChatInterface from "@/components/ChatInterface";
+import Link from "next/link";
 
 export default function Home() {
   return (
@@ -20,6 +21,14 @@ export default function Home() {
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 italic">
             &ldquo;Mieux vaut dire &lsquo;Je ne sais pas&rsquo; que de raconter n&rsquo;importe quoi&rdquo;
           </p>
+          <div className="mt-4">
+            <Link
+              href="/admin"
+              className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              🔧 Panneau d&apos;administration
+            </Link>
+          </div>
         </header>
         
         <ChatInterface />
