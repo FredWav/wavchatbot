@@ -1,27 +1,28 @@
 -- Database schema for Fred Wav Chatbot
--- Enable pgvector extension for embeddings
-CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS pg_trgm; -- For BM25-like text search
 
--- Documents table: stores the original markdown files and content
-CREATE TABLE documents (
+-- Extensions
+CREATE EXTENSION IF NOT EXISTS pgcrypto;   -- pour gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS vector;     -- embeddings
+CREATE EXTENSION IF NOT EXISTS pg_trgm;    -- FTS type BM25-like
+
+-- Documents
+CREATE TABLE IF NOT EXISTS documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT NOT NULL,
     body_md TEXT NOT NULL,
     tags TEXT[] DEFAULT '{}',
-    authority TEXT, -- Source authority/credibility level
+    authority TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for full-text search and tags
-CREATE INDEX idx_documents_title_search ON documents USING gin(to_tsvector('french', title));
-CREATE INDEX idx_documents_body_search ON documents USING gin(to_tsvector('french', body_md));
-CREATE INDEX idx_documents_tags ON documents USING gin(tags);
-CREATE INDEX idx_documents_authority ON documents(authority);
+CREATE INDEX IF NOT EXISTS idx_documents_title_search ON documents USING gin(to_tsvector('french', title));
+CREATE INDEX IF NOT EXISTS idx_documents_body_search  ON documents USING gin(to_tsvector('french', body_md));
+CREATE INDEX IF NOT EXISTS idx_documents_tags         ON documents USING gin(tags);
+CREATE INDEX IF NOT EXISTS idx_documents_authority    ON documents(authority);
 
--- Chunks table: stores processed chunks from documents
-CREATE TABLE chunks (
+-- Chunks
+CREATE TABLE IF NOT EXISTS chunks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
@@ -31,65 +32,68 @@ CREATE TABLE chunks (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for chunk retrieval
-CREATE INDEX idx_chunks_document_id ON chunks(document_id);
-CREATE INDEX idx_chunks_content_search ON chunks USING gin(to_tsvector('french', content));
-CREATE INDEX idx_chunks_metadata ON chunks USING gin(metadata);
+CREATE INDEX IF NOT EXISTS idx_chunks_document_id   ON chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_content_search ON chunks USING gin(to_tsvector('french', content));
+CREATE INDEX IF NOT EXISTS idx_chunks_metadata       ON chunks USING gin(metadata);
 
--- Chunk embeddings table: stores vector embeddings (OpenAI ada-002: 1536 dimensions)
-CREATE TABLE chunk_embeddings (
+-- Embeddings
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
     chunk_id UUID PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
     embedding vector(1536) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for vector similarity search
-CREATE INDEX idx_chunk_embeddings_vector ON chunk_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_vector
+  ON chunk_embeddings
+  USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 100);
 
--- Conversations table: stores user conversations
-CREATE TABLE conversations (
+-- Conversations
+CREATE TABLE IF NOT EXISTS conversations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL, -- Discord user ID or web session ID
+    user_id UUID NOT NULL,
     title TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for user conversations
-CREATE INDEX idx_conversations_user_id ON conversations(user_id);
-CREATE INDEX idx_conversations_created_at ON conversations(created_at);
+CREATE INDEX IF NOT EXISTS idx_conversations_user_id    ON conversations(user_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_created_at ON conversations(created_at);
 
--- Messages table: stores individual messages in conversations
-CREATE TABLE messages (
+-- Messages
+CREATE TABLE IF NOT EXISTS messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     user_id UUID NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
     content TEXT NOT NULL,
-    metadata JSONB DEFAULT '{}', -- For storing additional context, sources, etc.
+    metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for message retrieval
-CREATE INDEX idx_messages_conversation_id ON messages(conversation_id);
-CREATE INDEX idx_messages_user_id ON messages(user_id);
-CREATE INDEX idx_messages_created_at ON messages(created_at);
-CREATE INDEX idx_messages_role ON messages(role);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id         ON messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at      ON messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_role            ON messages(role);
 
--- Update timestamps trigger function
+-- Trigger updated_at
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ LANGUAGE plpgsql;
 
--- Apply update triggers
-CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_conversations_updated_at BEFORE UPDATE ON conversations FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_documents_updated_at
+  BEFORE UPDATE ON documents
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Function for hybrid search (BM25 + vector similarity)
+CREATE TRIGGER update_conversations_updated_at
+  BEFORE UPDATE ON conversations
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Hybrid search function
 CREATE OR REPLACE FUNCTION hybrid_search(
     query_text TEXT,
     query_embedding vector(1536),
