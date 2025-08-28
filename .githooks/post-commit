@@ -1,0 +1,54 @@
+#!/bin/sh
+# Fred Wav Chatbot - Post-commit hook for automatic push
+# This hook automatically pushes commits to the remote repository
+
+# Get current branch name
+branch=$(git rev-parse --abbrev-ref HEAD)
+
+# Colors for output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+echo "${YELLOW}🚀 Fred Wav Auto-Push Hook${NC}"
+echo "📍 Current branch: ${branch}"
+
+# Only auto-push on main or develop branches
+if [ "$branch" = "main" ] || [ "$branch" = "develop" ]; then
+    echo "${GREEN}✅ Auto-push enabled for branch: ${branch}${NC}"
+    
+    # Push to origin
+    echo "🔄 Pushing to origin/${branch}..."
+    
+    if git push -u origin "$branch"; then
+        echo "${GREEN}✅ Successfully pushed to origin/${branch}${NC}"
+        echo "🎉 Your changes are now live!"
+    else
+        echo "${RED}❌ Failed to push to origin/${branch}${NC}"
+        echo "⚠️  You may need to pull latest changes first:"
+        echo "   git pull origin ${branch}"
+        echo "   git push origin ${branch}"
+        exit 1
+    fi
+    
+elif [ "$branch" = "copilot/"* ]; then
+    echo "${GREEN}✅ Auto-push enabled for Copilot branch: ${branch}${NC}"
+    
+    # Push Copilot branches
+    echo "🔄 Pushing Copilot branch..."
+    
+    if git push -u origin "$branch"; then
+        echo "${GREEN}✅ Successfully pushed Copilot branch${NC}"
+    else
+        echo "${RED}❌ Failed to push Copilot branch${NC}"
+        exit 1
+    fi
+    
+else
+    echo "${YELLOW}⚠️  Auto-push disabled for branch: ${branch}${NC}"
+    echo "💡 Auto-push only works on: main, develop, copilot/*"
+    echo "🔧 To push manually: git push origin ${branch}"
+fi
+
+echo "✨ Post-commit hook completed!"

@@ -49,8 +49,8 @@ Thumbs.db
 *.swo
 *~
 
-# Git hooks (not committed)
-.githooks/
+# Git hooks are committed (not ignored)
+# .githooks/ 
 
 # Temp files
 tmp/
