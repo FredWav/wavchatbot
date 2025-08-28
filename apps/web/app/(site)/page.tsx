@@ -1,12 +1,21 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+import { useEffect, useRef, useState } from 'react';
 
 type Msg = { role: 'user' | 'assistant' | 'system'; content: string };
 type ApiOk = { response: string; conversationId: string; metadata?: any };
 type ApiErr = { error: string; message?: string };
 
+function genId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function getOrCreateUserId(): string {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return '';
   const name = 'fw_user_id';
   const fromCookie = document.cookie
     .split('; ')
@@ -14,11 +23,7 @@ function getOrCreateUserId(): string {
     ?.split('=')[1];
   if (fromCookie) return fromCookie;
 
-  const id =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
+  const id = genId();
   const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toUTCString();
   document.cookie = `${name}=${id}; path=/; expires=${expires}; SameSite=Lax`;
   try {
@@ -33,15 +38,19 @@ export default function Page() {
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const userId = useMemo(() => getOrCreateUserId(), []);
+  const [userId, setUserId] = useState<string>(''); // initial vide côté SSR
   const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setUserId(getOrCreateUserId());
+  }, []);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [msgs.length]);
 
   async function send() {
-    if (!input.trim() || sending) return;
+    if (!input.trim() || sending || !userId) return;
     const userText = input.trim();
     setInput('');
     setErr(null);
@@ -52,11 +61,7 @@ export default function Page() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          message: userText,
-          conversationId,
-          userId, // requis par ton schema.sql
-        }),
+        body: JSON.stringify({ message: userText, conversationId, userId }),
       });
 
       if (!res.ok) {
@@ -95,7 +100,9 @@ export default function Page() {
         <span style={{ opacity: 0.6, marginLeft: 8, fontSize: 12 }}>
           {conversationId ? `Conv: ${conversationId.slice(0, 8)}…` : 'Nouvelle conversation'}
         </span>
-        <span style={{ opacity: 0.6, marginLeft: 8, fontSize: 12 }}>UID: {userId.slice(0, 8)}…</span>
+        {userId && (
+          <span style={{ opacity: 0.6, marginLeft: 8, fontSize: 12 }}>UID: {userId.slice(0, 8)}…</span>
+        )}
       </header>
 
       <div
@@ -154,14 +161,14 @@ export default function Page() {
         />
         <button
           onClick={send}
-          disabled={sending || !input.trim()}
+          disabled={sending || !input.trim() || !userId}
           style={{
             border: '1px solid #2563eb',
-            background: sending ? '#93c5fd' : '#3b82f6',
+            background: sending || !userId ? '#93c5fd' : '#3b82f6',
             color: 'white',
             padding: '10px 14px',
             borderRadius: 10,
-            cursor: sending ? 'not-allowed' : 'pointer',
+            cursor: sending || !userId ? 'not-allowed' : 'pointer',
           }}
         >
           {sending ? '…' : 'Envoyer'}
