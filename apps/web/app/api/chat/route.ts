@@ -1,7 +1,7 @@
 // apps/web/app/api/chat/route.ts
-// "API first" : aucune logique conversationnelle côté serveur.
-// Le persona/knowledge gèrent le salut + 2 questions mini, etc.
-// Modèle : gpt-4o (puissance maximale).
+// API-first : tout le comportement est piloté par le prompt système (persona + knowledge).
+// Modèle : gpt-5 (puissance max) via Responses API + reasoning HIGH.
+// Pas de logique de salut/questions ici : c’est géré par SYSTEM_PROMPT.
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
@@ -14,7 +14,7 @@ type ChatBody = {
   userId?: string;
 };
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const oai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 function getAdmin(): SupabaseClient | null {
   const url = process.env.SUPABASE_URL;
@@ -39,12 +39,12 @@ async function fetchHistory(admin: SupabaseClient, conversationId: string) {
       .select("role, content")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true })
-      .limit(20);
+      .limit(24);
     if (error || !data) return [];
     return data.map((m) =>
       (m.role === "user" || m.role === "assistant" || m.role === "system")
-        ? { role: m.role as "user" | "assistant" | "system", content: m.content }
-        : { role: "user" as const, content: m.content }
+        ? ({ role: m.role, content: m.content } as const)
+        : ({ role: "user", content: m.content } as const)
     );
   } catch {
     return [];
@@ -65,10 +65,10 @@ export async function POST(req: Request) {
     const conversationId =
       body.conversationId || (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
 
+    // Persistance (best-effort)
     const admin = getAdmin();
     const ready = admin ? await dbReady(admin) : false;
 
-    // Persistance côté DB (facultative si la DB n'est pas prête)
     if (admin && ready) {
       await admin.from("conversations").upsert([{ id: conversationId, user_id: body.userId }], { onConflict: "id" });
       await admin.from("messages").insert({
@@ -79,26 +79,28 @@ export async function POST(req: Request) {
       });
     }
 
-    // Historique (si disponible) — on laisse l'API gérer le tour 1 (salut + 2 questions)
+    // Historique (si dispo)
     const history =
       admin && ready && body.conversationId ? await fetchHistory(admin, conversationId) : [];
 
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...history,
-      { role: "user", content: body.message },
-    ];
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",            // <-- puissance
-      temperature: 0.2,           // précis
-      max_tokens: 900,            // réponses détaillées si besoin
-      messages,
+    // === OpenAI Responses API (GPT-5) ===
+    // - instructions = ton persona/knowledge complet
+    // - reasoning effort HIGH pour pousser le raisonnement
+    // - text.verbosity pour gérer la longueur (sans injecter de phrases toutes faites)
+    const response = await oai.responses.create({
+      model: "gpt-5",
+      instructions: SYSTEM_PROMPT,
+      input: [
+        ...history,
+        { role: "user", content: body.message },
+      ],
+      temperature: 0.2,
+      max_output_tokens: 1400,
+      reasoning: { effort: "high" },      // contrôle de l’effort de raisonnement
+      text: { verbosity: "medium" },      // "low" / "medium" / "high"
     });
 
-    const text =
-      completion.choices?.[0]?.message?.content?.trim() ||
-      "Je n’ai pas pu générer de réponse. Reformule simplement ta demande.";
+    const text = (response as any).output_text?.trim?.() || "Je n’ai pas pu générer de réponse.";
 
     if (admin && ready) {
       await admin.from("messages").insert({
@@ -112,7 +114,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       response: text,
       conversationId,
-      metadata: { model: "gpt-4o" },
+      metadata: { model: "gpt-5" },
     });
   } catch (err: any) {
     const msg = String(err?.message || err);
