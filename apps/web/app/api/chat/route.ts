@@ -1,3 +1,8 @@
+// apps/web/app/api/chat/route.ts
+// "API first" : aucune logique conversationnelle côté serveur.
+// Le persona/knowledge gèrent le salut + 2 questions mini, etc.
+// Modèle : gpt-4o (puissance maximale).
+
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -34,7 +39,7 @@ async function fetchHistory(admin: SupabaseClient, conversationId: string) {
       .select("role, content")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true })
-      .limit(16);
+      .limit(20);
     if (error || !data) return [];
     return data.map((m) =>
       (m.role === "user" || m.role === "assistant" || m.role === "system")
@@ -51,32 +56,21 @@ export async function POST(req: Request) {
     const body = (await req.json()) as ChatBody;
 
     if (!body?.message || typeof body.message !== "string") {
-      return NextResponse.json(
-        { error: "BAD_REQUEST", message: "message manquant" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "BAD_REQUEST", message: "message manquant" }, { status: 400 });
     }
     if (!body?.userId || typeof body.userId !== "string") {
-      return NextResponse.json(
-        { error: "BAD_REQUEST", message: "userId manquant" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "BAD_REQUEST", message: "userId manquant" }, { status: 400 });
     }
 
-    const isNewConversation = !body.conversationId;
     const conversationId =
-      body.conversationId ||
-      (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+      body.conversationId || (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
 
     const admin = getAdmin();
     const ready = admin ? await dbReady(admin) : false;
 
-    // Log côté DB (si prête)
+    // Persistance côté DB (facultative si la DB n'est pas prête)
     if (admin && ready) {
-      await admin.from("conversations").upsert(
-        [{ id: conversationId, user_id: body.userId }],
-        { onConflict: "id" }
-      );
+      await admin.from("conversations").upsert([{ id: conversationId, user_id: body.userId }], { onConflict: "id" });
       await admin.from("messages").insert({
         conversation_id: conversationId,
         user_id: body.userId,
@@ -85,35 +79,9 @@ export async function POST(req: Request) {
       });
     }
 
-    // EXIGENCE : premier tour -> poser 2 questions MIN (niche + objectif/KPI+délai), rien d'autre
-    if (isNewConversation) {
-      const starter = [
-        "Pour bien t’aider, j’ai besoin de deux infos rapides :",
-        "1) Ta niche / ton profil précis ?",
-        "2) Ton objectif principal (KPI + délai) ?",
-      ].join("\n");
-
-      if (admin && ready) {
-        await admin.from("messages").insert({
-          conversation_id: conversationId,
-          user_id: body.userId,
-          role: "assistant",
-          content: starter,
-        });
-      }
-
-      return NextResponse.json({
-        response: starter,
-        conversationId,
-        metadata: { mode: "onboarding" },
-      });
-    }
-
-    // Tours suivants : réponse spécifique sans plan par défaut (le persona gère tout le reste)
+    // Historique (si disponible) — on laisse l'API gérer le tour 1 (salut + 2 questions)
     const history =
-      admin && ready && body.conversationId
-        ? await fetchHistory(admin, conversationId)
-        : [];
+      admin && ready && body.conversationId ? await fetchHistory(admin, conversationId) : [];
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: "system", content: SYSTEM_PROMPT },
@@ -122,14 +90,15 @@ export async function POST(req: Request) {
     ];
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.3,
+      model: "gpt-4o",            // <-- puissance
+      temperature: 0.2,           // précis
+      max_tokens: 900,            // réponses détaillées si besoin
       messages,
     });
 
     const text =
       completion.choices?.[0]?.message?.content?.trim() ||
-      "Précise ta niche et ton objectif (KPI + délai).";
+      "Je n’ai pas pu générer de réponse. Reformule simplement ta demande.";
 
     if (admin && ready) {
       await admin.from("messages").insert({
@@ -143,30 +112,19 @@ export async function POST(req: Request) {
     return NextResponse.json({
       response: text,
       conversationId,
-      metadata: { mode: "answer" },
+      metadata: { model: "gpt-4o" },
     });
   } catch (err: any) {
     const msg = String(err?.message || err);
     const schemaErr =
-      msg.includes("PGRST205") ||
-      msg.includes("schema cache") ||
-      msg.includes("relation") ||
-      msg.includes("does not exist");
+      msg.includes("PGRST205") || msg.includes("schema cache") || msg.includes("relation") || msg.includes("does not exist");
 
     if (schemaErr) {
       return NextResponse.json(
-        {
-          error: "DB_NOT_INITIALIZED",
-          message:
-            "Base non initialisée. Exécute db/schema.sql puis db/rls.sql dans Supabase.",
-        },
+        { error: "DB_NOT_INITIALIZED", message: "Base non initialisée. Exécute db/schema.sql puis db/rls.sql dans Supabase." },
         { status: 503 }
       );
     }
-
-    return NextResponse.json(
-      { error: "INTERNAL_ERROR", message: "Erreur interne" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "INTERNAL_ERROR", message: "Erreur interne" }, { status: 500 });
   }
 }
