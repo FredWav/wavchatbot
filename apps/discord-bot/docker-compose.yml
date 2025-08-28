@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  fredwav-discord-bot:
+    image: ghcr.io/fredwav/wavchatbot-discord:latest
+    container_name: fredwav-discord-bot
+    restart: unless-stopped
+    
+    environment:
+      - NODE_ENV=production
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
+      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
+      - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - API_BASE_URL=${API_BASE_URL:-https://fredwav-chatbot.vercel.app}
+    
+    healthcheck:
+      test: ["CMD", "node", "-e", "console.log('Health check')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    labels:
+      - "com.fredwav.service=discord-bot"
+      - "com.fredwav.version=${VERSION:-latest}"
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
