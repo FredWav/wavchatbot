@@ -1,18 +1,17 @@
 {
   "name": "wavchatbot",
   "version": "1.0.0",
-  "description": "Fred Wav Chatbot - Monorepo with Next.js web app, Discord bot, and RAG system",
+  "description": "Fred Wav Chatbot - Web application with RAG system for content creation expertise",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter web dev",
-    "build": "pnpm --filter web build",
-    "start": "pnpm --filter web start",
-    "lint": "pnpm --filter web lint",
-    "discord": "pnpm --filter discord-bot start",
+    "dev": "npm --workspace web run dev",
+    "build": "npm --workspace web run build",
+    "start": "npm --workspace web run start",
+    "lint": "npm --workspace web run lint",
     "ingest": "node scripts/ingest.js"
   },
   "workspaces": [
-    "apps/*"
+    "apps/web"
   ],
   "devDependencies": {
     "@types/node": "^20.0.0",

@@ -1,24 +1,36 @@
 // Supabase configuration and client setup
 import { createClient } from '@supabase/supabase-js'
 
-// Environment variables validation
-const supabaseUrl = process.env.SUPABASE_URL
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_ANON_KEY
+// Lazy initialization of Supabase client
+let supabaseClient: ReturnType<typeof createClient> | null = null
 
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error('Missing Supabase environment variables: SUPABASE_URL and SUPABASE_SERVICE_ROLE')
+export function getSupabaseClient() {
+  if (!supabaseClient) {
+    // Environment variables validation
+    const supabaseUrl = process.env.SUPABASE_URL
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_ANON_KEY
+
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Missing Supabase environment variables: SUPABASE_URL and SUPABASE_SERVICE_ROLE')
+    }
+
+    // Create Supabase client with service role for server-side operations
+    supabaseClient = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      }
+    })
+  }
+  
+  return supabaseClient
 }
 
-// Create Supabase client with service role for server-side operations
-export const supabase = createClient(supabaseUrl, supabaseKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false
-  },
-  db: {
-    schema: 'public'
-  }
-})
+// Export for backward compatibility
+export const supabase = {
+  get from() { return getSupabaseClient().from.bind(getSupabaseClient()) },
+  get rpc() { return getSupabaseClient().rpc.bind(getSupabaseClient()) }
+}
 
 // Types for database tables
 export interface Document {

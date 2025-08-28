@@ -1,13 +1,17 @@
 // RAG (Retrieval-Augmented Generation) utilities
 import OpenAI from 'openai'
-import { supabase, type HybridSearchResult, type Document, type Chunk } from '../config/supabase'
+import { getSupabaseClient, type HybridSearchResult, type Document, type Chunk } from '../config/supabase'
 import fs from 'fs'
 import path from 'path'
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+// Lazy initialization of OpenAI client
+function getOpenAIClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY environment variable is missing')
+  }
+  return new OpenAI({ apiKey })
+}
 
 /**
  * Generate embeddings for text using OpenAI's ada-002 model
@@ -18,6 +22,7 @@ export async function embed(text: string): Promise<number[]> {
   }
 
   try {
+    const openai = getOpenAIClient()
     const response = await openai.embeddings.create({
       model: 'text-embedding-ada-002',
       input: text.trim(),
@@ -51,7 +56,8 @@ export async function hybridSearch(
     const allNamespaces = ['fred_corpus', ...namespaces]
     
     // Call the hybrid search function from the database
-    const { data, error } = await supabase.rpc('hybrid_search', {
+    const supabase = getSupabaseClient()
+    const { data, error } = await (supabase as any).rpc('hybrid_search', {
       query_text: queryVariants[0],
       query_embedding: queryEmbedding,
       match_threshold: 0.7,
@@ -133,7 +139,8 @@ export async function ingestMarkdown(dir: string): Promise<void> {
       const title = lines.find(line => line.startsWith('# '))?.replace('# ', '') || fileName
       
       // Insert document
-      const { data: document, error: docError } = await supabase
+      const supabase = getSupabaseClient()
+      const { data: document, error: docError } = await (supabase as any)
         .from('documents')
         .insert({
           title,
@@ -158,7 +165,7 @@ export async function ingestMarkdown(dir: string): Promise<void> {
         const tokens = estimateTokens(chunkContent)
         
         // Insert chunk
-        const { data: chunk, error: chunkError } = await supabase
+        const { data: chunk, error: chunkError } = await (supabase as any)
           .from('chunks')
           .insert({
             document_id: document.id,
@@ -182,7 +189,7 @@ export async function ingestMarkdown(dir: string): Promise<void> {
         try {
           const embedding = await embed(chunkContent)
           
-          const { error: embeddingError } = await supabase
+          const { error: embeddingError } = await (supabase as any)
             .from('chunk_embeddings')
             .insert({
               chunk_id: chunk.id,

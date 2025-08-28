@@ -5,11 +5,16 @@ import { classifyMessage } from '@/lib/moderation'
 import { shouldSayIDK, composeRefusal, stripInjections, isMovableTopic } from '@/lib/guardrails'
 import { retrieveContext } from '@/lib/rag'
 import { SYSTEM_PROMPT } from '@/lib/persona'
-import { supabase } from '@/config/supabase'
+import { getSupabaseClient } from '@/config/supabase'
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+// Lazy initialization of OpenAI client
+function getOpenAIClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY environment variable is missing')
+  }
+  return new OpenAI({ apiKey })
+}
 
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
@@ -31,8 +36,9 @@ async function resolveUserId(request: NextRequest): Promise<string> {
 // Helper function to get or create conversation
 async function getOrCreateConversation(userId: string): Promise<string> {
   try {
+    const supabase = getSupabaseClient()
     // Try to get the most recent conversation for this user
-    const { data: conversations } = await supabase
+    const { data: conversations } = await (supabase as any)
       .from('conversations')
       .select('id')
       .eq('user_id', userId)
@@ -44,7 +50,7 @@ async function getOrCreateConversation(userId: string): Promise<string> {
     }
 
     // Create a new conversation
-    const { data: newConversation, error } = await supabase
+    const { data: newConversation, error } = await (supabase as any)
       .from('conversations')
       .insert({
         user_id: userId,
@@ -74,7 +80,8 @@ async function saveMessage(
   metadata: Record<string, any> = {}
 ) {
   try {
-    const { error } = await supabase
+    const supabase = getSupabaseClient()
+    const { error } = await (supabase as any)
       .from('messages')
       .insert({
         conversation_id: conversationId,
@@ -196,6 +203,7 @@ export async function POST(request: NextRequest) {
       { role: 'user', content: cleanMessage }
     ]
 
+    const openai = getOpenAIClient()
     const completion = await openai.chat.completions.create({
       model: 'gpt-4',
       messages,

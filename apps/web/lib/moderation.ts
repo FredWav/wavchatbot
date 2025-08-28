@@ -1,9 +1,14 @@
 // Moderation utilities and API integration
 import OpenAI from 'openai'
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+// Lazy initialization of OpenAI client
+function getOpenAIClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY environment variable is missing')
+  }
+  return new OpenAI({ apiKey })
+}
 
 export interface ModerationCategory {
   hate: boolean
@@ -47,6 +52,7 @@ export async function classifyMessage(message: string): Promise<ModerationResult
 
   try {
     // OpenAI moderation API for standard categories
+    const openai = getOpenAIClient()
     const moderation = await openai.moderations.create({
       input: message
     })

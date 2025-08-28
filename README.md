@@ -1,14 +1,13 @@
 # Fred Wav Chatbot
 
-Système de chatbot intelligent avec modération avancée "Wav Anti-Bullshit", RAG (Retrieval-Augmented Generation) et intégration multi-plateformes.
+Système de chatbot intelligent avec modération avancée "Wav Anti-Bullshit" et RAG (Retrieval-Augmented Generation) pour interface web.
 
 ## ✨ Fonctionnalités
 
 - **🤖 IA Conversationnelle** : Chat alimenté par GPT-4 avec personnalité Fred Wav
 - **🛡️ Wav Anti-Bullshit** : Système de modération avancée anti-hallucination
 - **📚 RAG Intelligence** : Recherche hybride (BM25 + vecteurs) sur base de connaissances
-- **💬 Discord Integration** : Bot avec threads privés `/fred`
-- **🌐 Interface Web** : Chat widget responsive avec badge de certification
+- **🌐 Interface Web** : Chat responsive avec badge de certification
 - **📊 Analytics Complets** : Suivi des conversations et métriques d'engagement
 
 ## 🏗️ Architecture
@@ -19,9 +18,6 @@ Système de chatbot intelligent avec modération avancée "Wav Anti-Bullshit", R
 │   ├── app/                  # App Router + API routes
 │   ├── lib/                  # RAG, modération, persona
 │   └── config/               # Supabase, environnement
-├── 🤖 apps/discord-bot/      # Bot Discord
-│   ├── commands/             # Commande /fred
-│   └── utils/                # Gestion threads
 ├── 🗄️ db/                   # Schémas Supabase
 ├── 📚 kb/                   # Base de connaissances
 ├── ⚙️ config/               # Configuration globale
@@ -32,16 +28,15 @@ Système de chatbot intelligent avec modération avancée "Wav Anti-Bullshit", R
 
 ### Prérequis
 - **Node.js 20+**
-- **pnpm** (gestionnaire de packages)
+- **npm** (gestionnaire de packages)
 - **Compte OpenAI** (API key)
 - **Projet Supabase** (base de données)
-- **Application Discord** (optionnel, pour bot)
 
 ### 1. Cloner et Installer
 ```bash
 git clone https://github.com/FredWav/wavchatbot.git
 cd wavchatbot
-pnpm install
+npm install
 ```
 
 ### 2. Configuration Environnement
@@ -66,16 +61,13 @@ SUPABASE_SERVICE_ROLE=votre_clé_service_role
 
 ### 4. Ingestion Base de Connaissances
 ```bash
-pnpm ingest
+npm run ingest
 ```
 
 ### 5. Lancement
 ```bash
 # Application web
-pnpm dev
-
-# Bot Discord (optionnel)
-pnpm discord
+npm run dev
 ```
 
 ## 🌐 Déploiement
@@ -87,23 +79,12 @@ pnpm discord
 vercel --prod
 ```
 
-### Discord Bot
-```bash
-# Sur serveur (PM2, Docker, etc.)
-NODE_ENV=production pnpm discord
-```
-
 ## 📖 Guide d'Utilisation
 
 ### Interface Web
 1. **Accéder** : `http://localhost:3000`
 2. **Poser question** : Interface chat intuitive
 3. **Recevoir réponse** : Diagnostic → Plan → Check-list → Prochaine étape
-
-### Discord Bot
-1. **Commande** : `/fred` dans serveur Discord
-2. **Thread privé** : Créé automatiquement
-3. **Conversation** : Relayée vers API avec contexte
 
 ### Wav Anti-Bullshit System
 - **N1** : "Je ne sais pas" si informations insuffisantes
@@ -118,12 +99,6 @@ NODE_ENV=production pnpm discord
 OPENAI_API_KEY=sk-...
 SUPABASE_URL=https://...
 SUPABASE_SERVICE_ROLE=...
-
-# Discord (optionnel)
-DISCORD_TOKEN=...
-DISCORD_CLIENT_ID=...
-DISCORD_GUILD_ID=...
-DISCORD_CHANNEL_ID=...
 
 # Advanced (optionnel)
 API_BASE_URL=http://localhost:3000
@@ -141,7 +116,6 @@ kb/
 ├── E-Audiovisuel/      # Production vidéo
 ├── F-Montage/          # Techniques montage
 ├── G-Monetisation/     # Stratégies revenus
-├── H-Communaute-Discord/ # Gestion communauté
 ├── I-SocialBoost-Pro/  # Croissance audience
 ├── J-Crypto/           # Web3 & crypto
 ├── K-Verification/     # Certification
@@ -153,7 +127,7 @@ kb/
 ```bash
 # 1. Créer fichier .md dans kb/[catégorie]/
 # 2. Lancer ingestion
-pnpm ingest
+npm run ingest
 # 3. Contenu automatiquement vectorisé et indexé
 ```
 
@@ -199,11 +173,11 @@ Content-Type: application/json
 - **Temps de réponse** : < 3s pour requêtes simples
 - **Précision RAG** : 85%+ pertinence sources
 - **Taux de refus WAB** : 5-10% (protection hallucinations)
-- **Uptime Discord** : 99.9%+
+- **Uptime Web** : 99.9%+
 
 ### Métriques Utilisateur
 - **Conversations actives** : Tableau Supabase
-- **Messages/jour** : Analytics Discord
+- **Messages/jour** : Analytics web
 - **Sources utilisées** : Métriques RAG
 - **Feedback quality** : Ratings utilisateurs
 
@@ -242,10 +216,7 @@ curl -X POST http://localhost:3000/api/moderate \
 ### Debug
 ```bash
 # Logs application
-pnpm dev --debug
-
-# Logs Discord bot
-DEBUG=discord* pnpm discord
+npm run dev --debug
 
 # Test ingestion
 node scripts/ingest.js --verbose
@@ -262,7 +233,7 @@ node scripts/ingest.js --verbose
 ### Ajout de Contenu KB
 1. **Créer** fichier `.md` dans `kb/[catégorie]/`
 2. **Structurer** : # Titre, ## Sections, ### Sous-sections
-3. **Tester** : `pnpm ingest` puis questions dans chat
+3. **Tester** : `npm run ingest` puis questions dans chat
 4. **PR** avec contexte d'utilisation
 
 ## 📋 Roadmap
@@ -270,7 +241,6 @@ node scripts/ingest.js --verbose
 ### Phase Actuelle ✅
 - [x] Core RAG system avec Supabase pgvector
 - [x] Interface web responsive
-- [x] Discord bot avec threads privés
 - [x] Système WAB complet
 - [x] Knowledge base ingestion
 
@@ -291,14 +261,7 @@ node scripts/ingest.js --verbose
 # Vérifier .env
 cat .env | grep OPENAI_API_KEY
 # Redémarrer si modifié
-pnpm dev
-```
-
-**Discord bot ne répond pas :**
-```bash
-# Vérifier permissions bot
-# Vérifier DISCORD_CHANNEL_ID
-# Réinviter bot avec permissions admin
+npm run dev
 ```
 
 **Embeddings échouent :**
@@ -309,7 +272,6 @@ pnpm dev
 ```
 
 ### Contact
-- **Discord** : Communauté Fred Wav
 - **GitHub Issues** : Pour bugs et features
 - **Email** : support@fredwav.com
 
