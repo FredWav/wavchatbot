@@ -35,7 +35,7 @@ export default function Page() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
-  const [thinking, setThinking] = useState(false);
+  const [thinking, setThinking] = useState(false); // affiche le spinner
   const [err, setErr] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string>('');
@@ -109,12 +109,58 @@ export default function Page() {
     }
   }
 
+  // Génère 12 branches du spinner
+  function Spinner() {
+    const bars = new Array(12).fill(null).map((_, i) => {
+      const angle = i * 30; // 360/12
+      return (
+        <span
+          key={i}
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: '50%',
+            width: 6,
+            height: 18,
+            marginLeft: -3,
+            marginTop: -18,
+            borderRadius: 3,
+            background: '#e5e7eb',
+            opacity: 0.18,
+            transformOrigin: '50% 18px',
+            transform: `rotate(${angle}deg) translateY(-8px)`,
+            animation: 'fw-spoke 1s linear infinite',
+            // décalage négatif pour un cycle déjà déphasé
+            animationDelay: `${-(i / 12)}s`,
+          }}
+        />
+      );
+    });
+
+    return (
+      <div
+        aria-label="assistant en train de répondre"
+        style={{
+          width: 44,
+          height: 44,
+          position: 'relative',
+          display: 'inline-block',
+        }}
+      >
+        {bars}
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: '100dvh', display: 'grid', gridTemplateRows: 'auto 1fr auto' }}>
       {/* Animations CSS */}
       <style>{`
-        @keyframes fw-bounce { 0%,80%,100%{ transform: scale(0); opacity:.4 } 40%{ transform: scale(1); opacity:1 } }
-        @keyframes fw-shimmer { 0% { background-position: -200px 0 } 100% { background-position: calc(200px + 100%) 0 } }
+        @keyframes fw-spoke {
+          0%   { opacity: 1 }
+          60%  { opacity: 0.25 }
+          100% { opacity: 0.18 }
+        }
       `}</style>
 
       {/* HEADER */}
@@ -245,7 +291,7 @@ export default function Page() {
               </div>
             ))}
 
-            {/* Bulle animation (pas de texte) */}
+            {/* Bulle animation (spinner circulaire, sans texte) */}
             {thinking && (
               <div
                 aria-label="Assistant en train de répondre"
@@ -255,41 +301,13 @@ export default function Page() {
                   background: 'rgba(30,41,59,0.70)',
                   border: '1px solid rgba(148,163,184,0.18)',
                   borderRadius: 12,
-                  padding: '10px 12px',
-                  color: '#e5e7eb',
+                  padding: '12px',
+                  display: 'inline-flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
                 }}
               >
-                {/* skeleton lignes */}
-                <div
-                  style={{
-                    height: 10,
-                    borderRadius: 6,
-                    background:
-                      'linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.15), rgba(255,255,255,0.06))',
-                    backgroundSize: '200px 100%',
-                    animation: 'fw-shimmer 1.1s infinite',
-                    width: '86%',
-                    marginBottom: 6,
-                  }}
-                />
-                <div
-                  style={{
-                    height: 10,
-                    borderRadius: 6,
-                    background:
-                      'linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.15), rgba(255,255,255,0.06))',
-                    backgroundSize: '200px 100%',
-                    animation: 'fw-shimmer 1.1s infinite',
-                    width: '72%',
-                    marginBottom: 8,
-                  }}
-                />
-                {/* points */}
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#e5e7eb', opacity: 0.7, animation: 'fw-bounce 1.2s 0s infinite ease-in-out' }} />
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#e5e7eb', opacity: 0.7, animation: 'fw-bounce 1.2s 0.15s infinite ease-in-out' }} />
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#e5e7eb', opacity: 0.7, animation: 'fw-bounce 1.2s 0.30s infinite ease-in-out' }} />
-                </div>
+                <Spinner />
               </div>
             )}
           </div>
