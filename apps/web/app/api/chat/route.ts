@@ -1,6 +1,6 @@
 // apps/web/app/api/chat/route.ts
 // API-first + GPT-5 (Responses API). On envoie toujours l'historique (DB + client)
-// pour que le modèle sache que ce n'est PAS le premier tour → pas de "Salut" en boucle.
+// pour que le modèle sache que ce n'est PAS le premier tour.
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
@@ -43,12 +43,11 @@ async function fetchHistory(admin: SupabaseClient, conversationId: string): Prom
       .order("created_at", { ascending: true })
       .limit(40);
     if (error || !data) return [];
-    return data
-      .map((m) =>
-        (m.role === "user" || m.role === "assistant" || m.role === "system")
-          ? ({ role: m.role, content: m.content } as Msg)
-          : ({ role: "user", content: m.content } as Msg)
-      );
+    return data.map((m) =>
+      (m.role === "user" || m.role === "assistant" || m.role === "system")
+        ? ({ role: m.role, content: m.content } as Msg)
+        : ({ role: "user", content: m.content } as Msg)
+    );
   } catch {
     return [];
   }
@@ -116,21 +115,22 @@ export async function POST(req: Request) {
       });
     }
 
-    // 4) Appel OpenAI — GPT-5 Responses API
+    // 4) OpenAI Responses API — GPT-5
     const response = await oai.responses.create({
       model: "gpt-5",
       instructions: SYSTEM_PROMPT,
       input: [
-        ...history,                          // contexte → évite de re-saluer
+        ...history,
         { role: "user", content: body.message },
       ],
       temperature: 0.2,
       max_output_tokens: 1400,
-      reasoning: { effort: "high" },
-      text: { verbosity: "medium" },
+      reasoning: { effort: "high" }, // si non supporté par la version du SDK, enlève cette ligne
     });
 
-    const text = (response as any).output_text?.trim?.() || "Je n’ai pas pu générer de réponse.";
+    const text =
+      (response as any).output_text?.trim?.() ||
+      "Je n’ai pas pu générer de réponse.";
 
     if (admin && ready) {
       await admin.from("messages").insert({
