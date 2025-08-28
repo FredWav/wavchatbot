@@ -1,0 +1,91 @@
+# .github/copilot-setup-steps.yml
+# Objet : préparer l’environnement éphémère utilisé par GitHub Copilot (Coding Agent)
+# pour builder, linter, typer et tester le repo AVANT de proposer/ouvrir une PR.
+# Syntaxe basée sur des "steps" de type GitHub Actions.
+
+steps:
+  # 1) Node + pnpm (Corepack)
+  - uses: actions/setup-node@v4
+    with:
+      node-version: '20'
+      check-latest: true
+
+  - name: Enable Corepack & activate pnpm
+    run: |
+      corepack enable
+      corepack prepare pnpm@9 --activate
+
+  - name: Print tool versions
+    run: |
+      node -v
+      pnpm -v
+
+  # 2) Cache pnpm (accélère les installations)
+  - name: Set PNPM_STORE_PATH
+    run: echo "PNPM_STORE_PATH=$(pwd)/.pnpm-store" >> $GITHUB_ENV
+
+  - name: Cache pnpm store
+    uses: actions/cache@v4
+    with:
+      path: ${{ env.PNPM_STORE_PATH }}
+      key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+      restore-keys: |
+        pnpm-${{ runner.os }}-
+
+  # 3) Installation des dépendances du monorepo
+  - name: Install dependencies
+    run: pnpm install --frozen-lockfile
+
+  # 4) Générations automatiques éventuelles (types, clients…)
+  - name: Run typegen (optional)
+    run: pnpm run typegen || echo "no typegen script"
+
+  # 5) Qualité : lint + typecheck + build
+  - name: Lint
+    run: pnpm run lint
+
+  - name: Type-check
+    run: pnpm run typecheck
+
+  - name: Build
+    run: pnpm run build
+
+  # 6) Playwright (E2E) — seulement si config présente
+  - name: Install Playwright browsers (optional)
+    if: ${{ hashFiles('**/playwright.config.*') != '' }}
+    run: pnpm exec playwright install --with-deps
+
+  # 7) Tests unitaires et E2E (si scripts définis)
+  - name: Run unit tests (optional)
+    run: pnpm run test --if-present
+
+  - name: Run e2e tests (optional)
+    if: ${{ hashFiles('**/playwright.config.*') != '' }}
+    run: pnpm run e2e --if-present
+
+  # 8) Supabase CLI (optionnel) — si token/secrets fournis
+  - name: Install Supabase CLI (optional)
+    if: ${{ env.SUPABASE_ACCESS_TOKEN != '' }}
+    uses: supabase/setup-cli@v1
+    with:
+      version: latest
+
+  - name: Supabase db start/migrate (optional)
+    if: ${{ env.SUPABASE_ACCESS_TOKEN != '' }}
+    run: |
+      supabase db start || true
+      # Si tu as un script de migration custom :
+      pnpm run db:migrate --if-present || true
+
+  # 9) Ingestion de la base de connaissance (optionnel)
+  - name: Ingest knowledge base (optional)
+    if: ${{ hashFiles('scripts/ingest.ts') != '' }}
+    run: node scripts/ingest.ts || echo "no ingestion script"
+
+  # 10) Build Discord bot (optionnel) — si le dossier existe
+  - name: Build Discord bot (optional)
+    if: ${{ hashFiles('apps/discord-bot/package.json') != '' }}
+    run: |
+      cd apps/discord-bot
+      pnpm install --frozen-lockfile
+      pnpm run build
