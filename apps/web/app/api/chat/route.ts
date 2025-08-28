@@ -1,6 +1,7 @@
 // apps/web/app/api/chat/route.ts
-// API-first + GPT-5 (Responses API). On envoie toujours l'historique (DB + client)
-// pour que le modèle sache que ce n'est PAS le premier tour.
+// API-first : tout le comportement est dans SYSTEM_PROMPT (persona + knowledge).
+// Modèle : gpt-5 (puissant). On utilise Chat Completions (stable) et on envoie
+// systématiquement l'historique (DB + client) pour éviter les re-salutations.
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
@@ -13,11 +14,12 @@ type ChatBody = {
   message: string;
   conversationId?: string;
   userId?: string;
-  history?: Msg[]; // historique envoyé par le client (fallback si DB non dispo)
+  history?: Msg[]; // historique côté client (fallback si DB indispo)
 };
 
-const oai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// --- Supabase helpers ---
 function getAdmin(): SupabaseClient | null {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE;
@@ -76,6 +78,7 @@ function dedupeConcat(a: Msg[], b: Msg[]): Msg[] {
   return out.slice(-24);
 }
 
+// --- Route handler ---
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as ChatBody;
@@ -90,22 +93,20 @@ export async function POST(req: Request) {
     const conversationId =
       body.conversationId || (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
 
+    // Persistence best-effort
     const admin = getAdmin();
     const ready = admin ? await dbReady(admin) : false;
 
-    // Upsert conversation AVANT de lire l'historique
     if (admin && ready) {
       await admin.from("conversations").upsert([{ id: conversationId, user_id: body.userId }], { onConflict: "id" });
     }
 
-    // 1) Historique DB (sans le message courant)
+    // Historique (DB + client)
     const dbHistory = admin && ready ? await fetchHistory(admin, conversationId) : [];
-
-    // 2) Historique client (fallback) puis fusion/déduplication
     const clientHistory = sanitizeClientHistory(body.history);
     const history = dedupeConcat(dbHistory, clientHistory);
 
-    // 3) Log du message courant côté DB (si dispo)
+    // Log du message courant
     if (admin && ready) {
       await admin.from("messages").insert({
         conversation_id: conversationId,
@@ -115,21 +116,22 @@ export async function POST(req: Request) {
       });
     }
 
-    // 4) OpenAI Responses API — GPT-5
-    const response = await oai.responses.create({
+    // --- OpenAI Chat Completions (gpt-5) ---
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...history,
+      { role: "user", content: body.message },
+    ];
+
+    const completion = await openai.chat.completions.create({
       model: "gpt-5",
-      instructions: SYSTEM_PROMPT,
-      input: [
-        ...history,
-        { role: "user", content: body.message },
-      ],
       temperature: 0.2,
-      max_output_tokens: 1400,
-      reasoning: { effort: "high" }, // si non supporté par la version du SDK, enlève cette ligne
+      max_tokens: 1400,
+      messages,
     });
 
     const text =
-      (response as any).output_text?.trim?.() ||
+      completion.choices?.[0]?.message?.content?.trim() ||
       "Je n’ai pas pu générer de réponse.";
 
     if (admin && ready) {
