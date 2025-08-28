@@ -1,7 +1,6 @@
-// apps/web/app/api/chat/route.ts
-// API-first : tout le comportement est dans SYSTEM_PROMPT (persona + knowledge).
-// Modèle : gpt-5 (puissant). On utilise Chat Completions (stable) et on envoie
-// systématiquement l'historique (DB + client) pour éviter les re-salutations.
+// API-first : le comportement vient de SYSTEM_PROMPT (persona + knowledge).
+// Modèle : gpt-4.1 (stable). Historique envoyé à chaque appel (DB + client)
+// pour éviter les re-salutations et garder le contexte.
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
@@ -14,13 +13,17 @@ type ChatBody = {
   message: string;
   conversationId?: string;
   userId?: string;
-  history?: Msg[]; // historique côté client (fallback si DB indispo)
+  history?: Msg[]; // historique côté client (fallback si DB off)
 };
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-// --- Supabase helpers ---
+// ---------- Supabase (optionnel) ----------
 function getAdmin(): SupabaseClient | null {
+  // Mets SUPABASE_ENABLED=0 sur Vercel pour désactiver toute persistance
+  const enabled = (process.env.SUPABASE_ENABLED ?? "1").toLowerCase();
+  if (enabled === "0" || enabled === "false") return null;
+
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE;
   if (!url || !key) return null;
@@ -60,7 +63,8 @@ function sanitizeClientHistory(h?: Msg[]): Msg[] {
   return h
     .filter(
       (m): m is Msg =>
-        !!m && typeof m.content === "string" &&
+        !!m &&
+        typeof m.content === "string" &&
         (m.role === "user" || m.role === "assistant" || m.role === "system")
     )
     .slice(-24);
@@ -78,7 +82,7 @@ function dedupeConcat(a: Msg[], b: Msg[]): Msg[] {
   return out.slice(-24);
 }
 
-// --- Route handler ---
+// ---------- Route handler ----------
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as ChatBody;
@@ -93,12 +97,15 @@ export async function POST(req: Request) {
     const conversationId =
       body.conversationId || (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
 
-    // Persistence best-effort
+    // Persistance (best-effort)
     const admin = getAdmin();
     const ready = admin ? await dbReady(admin) : false;
 
     if (admin && ready) {
-      await admin.from("conversations").upsert([{ id: conversationId, user_id: body.userId }], { onConflict: "id" });
+      await admin.from("conversations").upsert(
+        [{ id: conversationId, user_id: body.userId }],
+        { onConflict: "id" }
+      );
     }
 
     // Historique (DB + client)
@@ -116,7 +123,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // --- OpenAI Chat Completions (gpt-5) ---
+    // --- OpenAI Chat Completions (gpt-4.1) ---
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: "system", content: SYSTEM_PROMPT },
       ...history,
@@ -124,7 +131,7 @@ export async function POST(req: Request) {
     ];
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-5",
+      model: "gpt-4.1",
       temperature: 0.2,
       max_tokens: 1400,
       messages,
@@ -146,7 +153,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       response: text,
       conversationId,
-      metadata: { model: "gpt-5" },
+      metadata: { model: "gpt-4.1" },
     });
   } catch (err: any) {
     const msg = String(err?.message || err);
@@ -158,6 +165,16 @@ export async function POST(req: Request) {
         { status: 503 }
       );
     }
+
+    // Erreur OpenAI (ex : mauvais modèle/clé)
+    const status = err?.status ?? err?.response?.status;
+    if (status) {
+      return NextResponse.json(
+        { error: "OPENAI_ERROR", message: `OpenAI ${status} — ${msg}` },
+        { status: 502 }
+      );
+    }
+
     return NextResponse.json({ error: "INTERNAL_ERROR", message: "Erreur interne" }, { status: 500 });
   }
 }
