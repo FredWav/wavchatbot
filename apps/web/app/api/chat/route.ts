@@ -1,180 +1,396 @@
-// API-first : le comportement vient de SYSTEM_PROMPT (persona + knowledge).
-// Modèle : gpt-4.1 (stable). Historique envoyé à chaque appel (DB + client)
-// pour éviter les re-salutations et garder le contexte.
+'use client';
 
-import { NextResponse } from "next/server";
-import OpenAI from "openai";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import { SYSTEM_PROMPT } from "../../../lib/persona";
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-type Msg = { role: "user" | "assistant" | "system"; content: string };
+import { useEffect, useRef, useState } from 'react';
 
-type ChatBody = {
-  message: string;
-  conversationId?: string;
-  userId?: string;
-  history?: Msg[]; // historique côté client (fallback si DB off)
-};
+type Msg = { role: 'user' | 'assistant' | 'system'; content: string };
+type ApiOk = { response: string; conversationId: string; metadata?: any };
+type ApiErr = { error: string; message?: string };
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const ACCENT = '#7c3aed';           // violet accent
+const BG_DARK = '#0b0f1a';          // fond sombre
+const CARD = 'rgba(18,24,38,0.75)'; // “verre” sombre
 
-// ---------- Supabase (optionnel) ----------
-function getAdmin(): SupabaseClient | null {
-  // Mets SUPABASE_ENABLED=0 sur Vercel pour désactiver toute persistance
-  const enabled = (process.env.SUPABASE_ENABLED ?? "1").toLowerCase();
-  if (enabled === "0" || enabled === "false") return null;
-
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE;
-  if (!url || !key) return null;
-  return createClient(url, key, { auth: { persistSession: false } });
+function genId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-async function dbReady(admin: SupabaseClient) {
-  try {
-    const { error } = await admin.from("conversations").select("id").limit(1);
-    return !error;
-  } catch {
-    return false;
-  }
+function getOrCreateUserId(): string {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return '';
+  const name = 'fw_user_id';
+  const fromCookie = document.cookie.split('; ').find((c) => c.startsWith(name + '='))?.split('=')[1];
+  if (fromCookie) return fromCookie;
+
+  const id = genId();
+  const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toUTCString();
+  document.cookie = `${name}=${id}; path=/; expires=${expires}; SameSite=Lax`;
+  try { localStorage.setItem(name, id); } catch {}
+  return id;
 }
 
-async function fetchHistory(admin: SupabaseClient, conversationId: string): Promise<Msg[]> {
-  try {
-    const { data, error } = await admin
-      .from("messages")
-      .select("role, content")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true })
-      .limit(40);
-    if (error || !data) return [];
-    return data.map((m) =>
-      (m.role === "user" || m.role === "assistant" || m.role === "system")
-        ? ({ role: m.role, content: m.content } as Msg)
-        : ({ role: "user", content: m.content } as Msg)
-    );
-  } catch {
-    return [];
-  }
-}
+export default function Page() {
+  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [thinking, setThinking] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string>('');
+  const listRef = useRef<HTMLDivElement>(null);
 
-function sanitizeClientHistory(h?: Msg[]): Msg[] {
-  if (!Array.isArray(h)) return [];
-  return h
-    .filter(
-      (m): m is Msg =>
-        !!m &&
-        typeof m.content === "string" &&
-        (m.role === "user" || m.role === "assistant" || m.role === "system")
-    )
-    .slice(-24);
-}
-
-function dedupeConcat(a: Msg[], b: Msg[]): Msg[] {
-  const seen = new Set<string>();
-  const out: Msg[] = [];
-  for (const m of [...a, ...b]) {
-    const key = `${m.role}::${m.content}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(m);
-  }
-  return out.slice(-24);
-}
-
-// ---------- Route handler ----------
-export async function POST(req: Request) {
-  try {
-    const body = (await req.json()) as ChatBody;
-
-    if (!body?.message || typeof body.message !== "string") {
-      return NextResponse.json({ error: "BAD_REQUEST", message: "message manquant" }, { status: 400 });
+  // Setup visuel global
+  useEffect(() => {
+    setUserId(getOrCreateUserId());
+    if (typeof document !== 'undefined') {
+      document.body.style.margin = '0';
+      document.body.style.background = `radial-gradient(1200px 700px at 20% 0%, rgba(124,58,237,0.18), rgba(0,0,0,0)), radial-gradient(1200px 700px at 80% 30%, rgba(14,165,233,0.12), rgba(0,0,0,0))`;
+      document.body.style.backgroundColor = BG_DARK;
+      document.body.style.color = '#e5e7eb';
+      document.body.style.fontFamily = 'Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif';
     }
-    if (!body?.userId || typeof body.userId !== "string") {
-      return NextResponse.json({ error: "BAD_REQUEST", message: "userId manquant" }, { status: 400 });
-    }
+  }, []);
 
-    const conversationId =
-      body.conversationId || (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+  // Auto-scroll bas à chaque nouveau message / animation
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+  }, [msgs.length, thinking]);
 
-    // Persistance (best-effort)
-    const admin = getAdmin();
-    const ready = admin ? await dbReady(admin) : false;
+  async function send() {
+    if (!input.trim() || sending || !userId) return;
 
-    if (admin && ready) {
-      await admin.from("conversations").upsert(
-        [{ id: conversationId, user_id: body.userId }],
-        { onConflict: "id" }
-      );
-    }
+    const userText = input.trim();
+    setInput('');
+    setErr(null);
 
-    // Historique (DB + client)
-    const dbHistory = admin && ready ? await fetchHistory(admin, conversationId) : [];
-    const clientHistory = sanitizeClientHistory(body.history);
-    const history = dedupeConcat(dbHistory, clientHistory);
+    // Ajoute d'abord le message côté client
+    setMsgs((m) => [...m, { role: 'user', content: userText }]);
+    setSending(true);
+    setThinking(true);
 
-    // Log du message courant
-    if (admin && ready) {
-      await admin.from("messages").insert({
-        conversation_id: conversationId,
-        user_id: body.userId,
-        role: "user",
-        content: body.message,
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          message: userText,
+          conversationId,
+          userId,
+          history: msgs.slice(-16), // envoi du contexte
+        }),
       });
+
+      if (!res.ok) {
+        let detail = `Erreur technique (${res.status}).`;
+        try { const j = (await res.json()) as ApiErr; if (j?.message) detail = j.message; } catch {}
+        setErr(detail);
+        setMsgs((m) => [...m, { role: 'assistant', content: "Désolé, une erreur est survenue." }]);
+        return;
+      }
+
+      const data = (await res.json()) as ApiOk;
+      setConversationId((id) => id ?? data.conversationId);
+      setMsgs((m) => [...m, { role: 'assistant', content: data.response }]);
+    } catch {
+      setErr('Réseau ou API indisponible.');
+      setMsgs((m) => [...m, { role: 'assistant', content: 'API indisponible. Réessaie.' }]);
+    } finally {
+      setThinking(false);
+      setSending(false);
     }
-
-    // --- OpenAI Chat Completions (gpt-4.1) ---
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...history,
-      { role: "user", content: body.message },
-    ];
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4.1",
-      temperature: 0.2,
-      max_tokens: 1400,
-      messages,
-    });
-
-    const text =
-      completion.choices?.[0]?.message?.content?.trim() ||
-      "Je n’ai pas pu générer de réponse.";
-
-    if (admin && ready) {
-      await admin.from("messages").insert({
-        conversation_id: conversationId,
-        user_id: body.userId,
-        role: "assistant",
-        content: text,
-      });
-    }
-
-    return NextResponse.json({
-      response: text,
-      conversationId,
-      metadata: { model: "gpt-4.1" },
-    });
-  } catch (err: any) {
-    const msg = String(err?.message || err);
-    const schemaErr =
-      msg.includes("PGRST205") || msg.includes("schema cache") || msg.includes("relation") || msg.includes("does not exist");
-    if (schemaErr) {
-      return NextResponse.json(
-        { error: "DB_NOT_INITIALIZED", message: "Base non initialisée. Exécute db/schema.sql puis db/rls.sql dans Supabase." },
-        { status: 503 }
-      );
-    }
-
-    // Erreur OpenAI (ex : mauvais modèle/clé)
-    const status = err?.status ?? err?.response?.status;
-    if (status) {
-      return NextResponse.json(
-        { error: "OPENAI_ERROR", message: `OpenAI ${status} — ${msg}` },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json({ error: "INTERNAL_ERROR", message: "Erreur interne" }, { status: 500 });
   }
+
+  function onKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  }
+
+  return (
+    <div style={{ minHeight: '100dvh', display: 'grid', gridTemplateRows: 'auto 1fr auto' }}>
+      {/* Animations CSS */}
+      <style>{`
+        @keyframes fw-bounce { 0%,80%,100%{ transform: scale(0); opacity:.4 } 40%{ transform: scale(1); opacity:1 } }
+        @keyframes fw-shimmer { 0% { background-position: -200px 0 } 100% { background-position: calc(200px + 100%) 0 } }
+      `}</style>
+
+      {/* HEADER */}
+      <header
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '14px 12px',
+          backdropFilter: 'saturate(140%) blur(10px)',
+        }}
+      >
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 980,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: 8,
+                background: `linear-gradient(135deg, ${ACCENT}, #22d3ee)`,
+                boxShadow: `0 0 0 2px rgba(124,58,237,0.35)`,
+              }}
+            />
+            <div style={{ lineHeight: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>Fred Wav (assistant)</div>
+            </div>
+          </div>
+
+          <div
+            style={{
+              fontSize: 12,
+              padding: '6px 10px',
+              borderRadius: 999,
+              border: '1px solid rgba(124,58,237,0.5)',
+              background: 'rgba(124,58,237,0.12)',
+              color: '#e9d5ff',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            ✅ Certifié Wav Anti-Bullshit
+          </div>
+        </div>
+      </header>
+
+      {/* CHAT */}
+      <main style={{ display: 'flex', justifyContent: 'center', padding: '8px 12px 0' }}>
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 980,
+            background: CARD,
+            border: '1px solid rgba(148,163,184,0.12)',
+            borderRadius: 16,
+            boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+            display: 'grid',
+            gridTemplateRows: '1fr auto',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Liste messages */}
+          <div
+            ref={listRef}
+            style={{
+              padding: 14,
+              paddingBottom: 0,
+              overflowY: 'auto',
+              maxHeight: 'calc(100dvh - 180px)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              alignContent: 'start',
+            }}
+          >
+            {msgs.length === 0 && (
+              <div
+                style={{
+                  opacity: 0.9,
+                  fontSize: 14,
+                  lineHeight: 1.28,
+                  background: 'rgba(30,41,59,0.6)',
+                  border: '1px dashed rgba(148,163,184,0.25)',
+                  padding: '10px 12px',
+                  borderRadius: 10,
+                }}
+              >
+                Je suis <b>Fred Wav (assistant)</b>, le double IA de Fred Wav.
+                <br />
+                Comment puis-je t’aider aujourd’hui ?
+              </div>
+            )}
+
+            {msgs.map((m, i) => (
+              <div
+                key={i}
+                style={{
+                  alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+                  maxWidth: '78%',
+                  background:
+                    m.role === 'user'
+                      ? 'linear-gradient(180deg, rgba(124,58,237,0.22), rgba(124,58,237,0.14))'
+                      : 'rgba(30,41,59,0.70)',
+                  border:
+                    m.role === 'user'
+                      ? '1px solid rgba(124,58,237,0.45)'
+                      : '1px solid rgba(148,163,184,0.18)',
+                  borderRadius: 12,
+                  padding: '8px 10px',
+                  color: '#e5e7eb',
+                  fontSize: 15,
+                  lineHeight: 1.28,
+                  letterSpacing: '0.1px',
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {m.content}
+              </div>
+            ))}
+
+            {/* Bulle animation (pas de texte) */}
+            {thinking && (
+              <div
+                aria-label="Assistant en train de répondre"
+                style={{
+                  alignSelf: 'flex-start',
+                  maxWidth: '78%',
+                  background: 'rgba(30,41,59,0.70)',
+                  border: '1px solid rgba(148,163,184,0.18)',
+                  borderRadius: 12,
+                  padding: '10px 12px',
+                  color: '#e5e7eb',
+                }}
+              >
+                {/* skeleton lignes */}
+                <div
+                  style={{
+                    height: 10,
+                    borderRadius: 6,
+                    background:
+                      'linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.15), rgba(255,255,255,0.06))',
+                    backgroundSize: '200px 100%',
+                    animation: 'fw-shimmer 1.1s infinite',
+                    width: '86%',
+                    marginBottom: 6,
+                  }}
+                />
+                <div
+                  style={{
+                    height: 10,
+                    borderRadius: 6,
+                    background:
+                      'linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.15), rgba(255,255,255,0.06))',
+                    backgroundSize: '200px 100%',
+                    animation: 'fw-shimmer 1.1s infinite',
+                    width: '72%',
+                    marginBottom: 8,
+                  }}
+                />
+                {/* points */}
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#e5e7eb', opacity: 0.7, animation: 'fw-bounce 1.2s 0s infinite ease-in-out' }} />
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#e5e7eb', opacity: 0.7, animation: 'fw-bounce 1.2s 0.15s infinite ease-in-out' }} />
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#e5e7eb', opacity: 0.7, animation: 'fw-bounce 1.2s 0.30s infinite ease-in-out' }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Barre d’input */}
+          <div
+            style={{
+              position: 'sticky',
+              bottom: 0,
+              background: 'linear-gradient(0deg, rgba(11,15,26,0.9), rgba(11,15,26,0.6))',
+              padding: 12,
+              borderTop: '1px solid rgba(148,163,184,0.12)',
+            }}
+          >
+            {err && (
+              <div
+                style={{
+                  color: '#fecaca',
+                  background: 'rgba(239,68,68,0.10)',
+                  border: '1px solid rgba(239,68,68,0.35)',
+                  padding: '8px 10px',
+                  borderRadius: 10,
+                  marginBottom: 8,
+                  fontSize: 13,
+                }}
+              >
+                {err}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'center' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  background: 'rgba(2,6,23,0.6)',
+                  border: `2px solid ${ACCENT}`,
+                  borderRadius: 12,
+                  padding: '6px 10px',
+                  boxShadow: `0 0 0 3px rgba(124,58,237,0.12)`,
+                }}
+              >
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={onKey}
+                  placeholder="Écris ici… (Entrée pour envoyer)"
+                  style={{
+                    flex: 1,
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    color: '#e5e7eb',
+                    fontSize: 15,
+                    lineHeight: 1.28,
+                    padding: '6px 2px',
+                  }}
+                />
+              </div>
+
+              <button
+                onClick={() => {
+                  const el = document.activeElement as HTMLInputElement | null;
+                  if (el && el.tagName === 'INPUT') el.blur();
+                  (async () => { await send(); })();
+                }}
+                disabled={sending || !input.trim() || !userId}
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: 12,
+                  border: `1px solid ${ACCENT}`,
+                  background: sending || !input.trim() || !userId ? 'rgba(124,58,237,0.35)' : ACCENT,
+                  color: 'white',
+                  fontWeight: 600,
+                  cursor: sending || !input.trim() || !userId ? 'not-allowed' : 'pointer',
+                  boxShadow: `0 8px 20px rgba(124,58,237,0.35)`,
+                  letterSpacing: '0.2px',
+                }}
+                aria-label="Envoyer"
+                title="Envoyer (Entrée)"
+              >
+                {sending ? '…' : 'Envoyer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <footer
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          padding: '8px 12px 16px',
+          opacity: 0.5,
+          fontSize: 12,
+        }}
+      >
+        <div style={{ width: '100%', maxWidth: 980 }}>
+          © {new Date().getFullYear()} Fred Wav — Assistant IA
+        </div>
+      </footer>
+    </div>
+  );
 }
