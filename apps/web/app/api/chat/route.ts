@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { SYSTEM_PROMPT } from "../../../lib/persona";
 
 type ChatBody = {
   message: string;
   conversationId?: string;
-  userId?: string; // requis par ton schema.sql
+  userId?: string;
 };
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -26,6 +27,25 @@ async function dbReady(admin: SupabaseClient) {
   }
 }
 
+async function fetchHistory(admin: SupabaseClient, conversationId: string) {
+  try {
+    const { data, error } = await admin
+      .from("messages")
+      .select("role, content")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true })
+      .limit(16);
+    if (error || !data) return [];
+    return data.map((m) =>
+      (m.role === "user" || m.role === "assistant" || m.role === "system")
+        ? { role: m.role as "user" | "assistant" | "system", content: m.content }
+        : { role: "user" as const, content: m.content }
+    );
+  } catch {
+    return [];
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as ChatBody;
@@ -43,63 +63,87 @@ export async function POST(req: Request) {
       );
     }
 
+    const isNewConversation = !body.conversationId;
     const conversationId =
       body.conversationId ||
       (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
 
     const admin = getAdmin();
-    const isReady = admin ? await dbReady(admin) : false;
+    const ready = admin ? await dbReady(admin) : false;
 
-    // Journalisation si DB prête
-    if (admin && isReady) {
+    // Log côté DB (si prête)
+    if (admin && ready) {
       await admin.from("conversations").upsert(
-        [
-          {
-            id: conversationId,
-            user_id: body.userId,
-            created_at: new Date().toISOString(),
-          },
-        ],
+        [{ id: conversationId, user_id: body.userId }],
         { onConflict: "id" }
       );
-
       await admin.from("messages").insert({
         conversation_id: conversationId,
         user_id: body.userId,
         role: "user",
         content: body.message,
-        created_at: new Date().toISOString(),
       });
     }
 
-    // Réponse OpenAI
+    // EXIGENCE : premier tour -> poser 2 questions MIN (niche + objectif/KPI+délai), rien d'autre
+    if (isNewConversation) {
+      const starter = [
+        "Pour bien t’aider, j’ai besoin de deux infos rapides :",
+        "1) Ta niche / ton profil précis ?",
+        "2) Ton objectif principal (KPI + délai) ?",
+      ].join("\n");
+
+      if (admin && ready) {
+        await admin.from("messages").insert({
+          conversation_id: conversationId,
+          user_id: body.userId,
+          role: "assistant",
+          content: starter,
+        });
+      }
+
+      return NextResponse.json({
+        response: starter,
+        conversationId,
+        metadata: { mode: "onboarding" },
+      });
+    }
+
+    // Tours suivants : réponse spécifique sans plan par défaut (le persona gère tout le reste)
+    const history =
+      admin && ready && body.conversationId
+        ? await fetchHistory(admin, conversationId)
+        : [];
+
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...history,
+      { role: "user", content: body.message },
+    ];
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      temperature: 0.4,
-      messages: [
-        { role: "system", content: "Tu es un assistant clair et concret." },
-        { role: "user", content: body.message },
-      ],
+      temperature: 0.3,
+      messages,
     });
 
     const text =
       completion.choices?.[0]?.message?.content?.trim() ||
-      "Je n’ai pas pu générer de réponse.";
+      "Précise ta niche et ton objectif (KPI + délai).";
 
-    if (admin && isReady) {
+    if (admin && ready) {
       await admin.from("messages").insert({
         conversation_id: conversationId,
         user_id: body.userId,
         role: "assistant",
         content: text,
-        created_at: new Date().toISOString(),
       });
     }
 
     return NextResponse.json({
       response: text,
       conversationId,
-      metadata: { sources: 0, movable: false, contradiction: false },
+      metadata: { mode: "answer" },
     });
   } catch (err: any) {
     const msg = String(err?.message || err);
